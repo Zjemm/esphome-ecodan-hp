@@ -153,4 +153,10 @@ substitutions:
   total_increasing_cool_consumed: Consumo Total Refrigeración
   total_increasing_cool_delivered: Producción Total Refrigeración
   total_increasing_dhw_consumed: Consumo Total ACS
-  total_increasing_dhw_delivered: Producción Total ACS
+  total_increasing_dhw_delivered: Producción Total ACS  # sync to remote thermostat translations
+  sync_remote_thermostat_ip: Remote Thermostat IP
+  sync_remote_room_id: Remote Room ID
+  sync_interval_seconds: Sync Interval (seconds)
+  sync_zone_selector: Sync Zone
+  sync_to_remote_enabled: Sync to Remote Thermostat
+  sync_last_synced_temp: Last Synced Temperature

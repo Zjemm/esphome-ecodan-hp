@@ -1,0 +1,208 @@
+# =============================================================================
+# Sync Temperature to Remote Thermostat via REST API
+# =============================================================================
+# This configuration automatically sends Zone 1 or Zone 2 room temperature 
+# from the CN105 heat pump to the CNRF remote thermostat via HTTP POST.
+#
+# DOCUMENTATION:
+#   See docs/sync-to-remote-thermostat.md for complete setup instructions
+#
+# CRITICAL REQUIREMENT:
+#   You MUST add an ID to the http_request component in ecodan-esphome.yaml:
+#   
+#   http_request:
+#     buffer_size_tx: 20248
+#     id: http_request_component    # ADD THIS LINE
+#
+#   Without this ID, compilation will fail!
+#
+# FEATURES:
+#   - Real-time temperature sync when sensor value changes
+#   - Periodic fallback sync (configurable interval)
+#   - Fully configurable via Web UI (no reflash needed)
+#   - Supports both Zone 1 and Zone 2
+#   - Safety: Default OFF, empty IP validation
+# =============================================================================
+
+# =============================================================================
+# Web UI Configurable Settings
+# =============================================================================
+
+# Remote thermostat IP address (configurable via Web UI)
+text:
+  - platform: template
+    name: ${sync_remote_thermostat_ip}
+    id: remote_thermostat_ip_setting
+    optimistic: true
+    initial_value: ""
+    restore_value: true
+    mode: text
+    icon: "mdi:ip-network"
+    entity_category: config
+
+  - platform: template
+    name: ${sync_remote_room_id}
+    id: remote_room_id_setting
+    optimistic: true
+    initial_value: "0"
+    restore_value: true
+    mode: text
+    icon: "mdi:numeric"
+    entity_category: config
+
+# Sync interval in seconds (configurable via Web UI)
+number:
+  - platform: template
+    name: ${sync_interval_seconds}
+    id: sync_interval_setting
+    optimistic: true
+    initial_value: 60
+    restore_value: true
+    min_value: 10
+    max_value: 300
+    step: 5
+    mode: box
+    icon: "mdi:timer-outline"
+    entity_category: config
+    unit_of_measurement: "s"
+
+# Zone selection: Zone 1 or Zone 2
+select:
+  - platform: template
+    name: ${sync_zone_selector}
+    id: sync_zone_selector
+    optimistic: true
+    restore_value: true
+    icon: "mdi:home-thermometer"
+    entity_category: config
+    options:
+      - "Zone 1"
+      - "Zone 2"
+    initial_option: "Zone 2"
+
+# Enable/disable switch for syncing
+switch:
+  - platform: template
+    name: ${sync_to_remote_enabled}
+    id: sync_to_remote_enabled
+    restore_mode: RESTORE_DEFAULT_OFF
+    optimistic: true
+    icon: "mdi:thermometer-lines"
+    entity_category: config
+
+# Interval to sync temperature periodically (fallback mechanism)
+# This ensures temperature is synced even if on_value doesn't trigger
+# Uses the interval setting from the number component
+interval:
+  - interval: 10s
+    then:
+      - if:
+          condition:
+            switch.is_on: sync_to_remote_enabled
+          then:
+            - lambda: |-
+                // Check if it's time to sync based on the configured interval
+                static uint32_t last_sync = 0;
+                uint32_t now = millis();
+                uint32_t interval_ms = id(sync_interval_setting).state * 1000;
+                
+                if (now - last_sync >= interval_ms) {
+                  // Check if IP is configured
+                  std::string ip = id(remote_thermostat_ip_setting).state;
+                  if (ip.empty() || ip == "") {
+                    ESP_LOGW("sync_thermostat", "Remote thermostat IP not configured, skipping sync");
+                    last_sync = now;
+                    return;
+                  }
+                  
+                  // Determine which zone to sync
+                  std::string selected_zone = id(sync_zone_selector).state;
+                  float temp = NAN;
+                  
+                  if (selected_zone == "Zone 1" && id(z1_room_temp).has_state()) {
+                    temp = id(z1_room_temp).state;
+                  } else if (selected_zone == "Zone 2" && id(z2_room_temp).has_state()) {
+                    temp = id(z2_room_temp).state;
+                  }
+                  
+                  if (!isnan(temp)) {
+                    std::string room_id = id(remote_room_id_setting).state;
+                    std::string url = "http://" + ip + "/number/room_" + room_id + "/set?value=" + str_sprintf("%.1f", temp);
+                    
+                    ESP_LOGI("sync_thermostat", "Periodic sync: %.1f°C from %s to %s", temp, selected_zone.c_str(), url.c_str());
+                    
+                    // Use the http_request component (must have ID: http_request_component)
+                    id(http_request_component).post(url, "");
+                    id(last_synced_temp).publish_state(temp);
+                    
+                    last_sync = now;
+                  }
+                }
+
+# Extend the zone temperature sensors to add on_value triggers
+sensor:
+  - platform: template
+    name: ${sync_last_synced_temp}
+    id: last_synced_temp
+    unit_of_measurement: "°C"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+    icon: "mdi:thermometer-check"
+    entity_category: diagnostic
+
+  # Zone 1 room temperature on_value trigger
+  - platform: ecodan
+    z1_room_temp:
+      on_value:
+        then:
+          - if:
+              condition:
+                and:
+                  - switch.is_on: sync_to_remote_enabled
+                  - lambda: 'return id(sync_zone_selector).state == "Zone 1";'
+              then:
+                - lambda: |-
+                    std::string ip = id(remote_thermostat_ip_setting).state;
+                    if (ip.empty() || ip == "") {
+                      ESP_LOGW("sync_thermostat", "Remote thermostat IP not configured, skipping sync");
+                      return;
+                    }
+                    
+                    float temp = x;
+                    std::string room_id = id(remote_room_id_setting).state;
+                    std::string url = "http://" + ip + "/number/room_" + room_id + "/set?value=" + str_sprintf("%.1f", temp);
+                    
+                    ESP_LOGI("sync_thermostat", "Zone 1 temperature changed to %.1f°C, updating remote thermostat at %s", temp, url.c_str());
+                    
+                    // Use the http_request component (must have ID: http_request_component)
+                    id(http_request_component).post(url, "");
+                    id(last_synced_temp).publish_state(temp);
+
+  # Zone 2 room temperature on_value trigger
+  - platform: ecodan
+    z2_room_temp:
+      on_value:
+        then:
+          - if:
+              condition:
+                and:
+                  - switch.is_on: sync_to_remote_enabled
+                  - lambda: 'return id(sync_zone_selector).state == "Zone 2";'
+              then:
+                - lambda: |-
+                    std::string ip = id(remote_thermostat_ip_setting).state;
+                    if (ip.empty() || ip == "") {
+                      ESP_LOGW("sync_thermostat", "Remote thermostat IP not configured, skipping sync");
+                      return;
+                    }
+                    
+                    float temp = x;
+                    std::string room_id = id(remote_room_id_setting).state;
+                    std::string url = "http://" + ip + "/number/room_" + room_id + "/set?value=" + str_sprintf("%.1f", temp);
+                    
+                    ESP_LOGI("sync_thermostat", "Zone 2 temperature changed to %.1f°C, updating remote thermostat at %s", temp, url.c_str());
+                    
+                    // Use the http_request component (must have ID: http_request_component)
+                    id(http_request_component).post(url, "");
+                    id(last_synced_temp).publish_state(temp);

@@ -152,4 +152,10 @@ substitutions:
   total_increasing_cool_consumed: Totalt Forbruk Kjøling
   total_increasing_cool_delivered: Totalt Levert Kjøling
   total_increasing_dhw_consumed: Totalt Forbruk Varmtvann
-  total_increasing_dhw_delivered: Totalt Levert Varmtvann
+  total_increasing_dhw_delivered: Totalt Levert Varmtvann  # sync to remote thermostat translations
+  sync_remote_thermostat_ip: Remote Thermostat IP
+  sync_remote_room_id: Remote Room ID
+  sync_interval_seconds: Sync Interval (seconds)
+  sync_zone_selector: Sync Zone
+  sync_to_remote_enabled: Sync to Remote Thermostat
+  sync_last_synced_temp: Last Synced Temperature
