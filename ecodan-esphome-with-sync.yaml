@@ -85,7 +85,7 @@ packages:
             # confs/ecodan-labels-da.yaml,  # Danish
             # confs/ecodan-labels-pl.yaml,  # Polish
             confs/debug.yaml,
-            confs/wifi.yaml,
+            confs/wifi-ota.yaml,  # OTA-friendly: no hardcoded WiFi, preserves existing settings
             confs/sync-to-remote-thermostat.yaml  # NEW: temperature sync feature
            ]
 
