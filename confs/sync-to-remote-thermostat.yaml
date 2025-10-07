@@ -139,7 +139,7 @@ interval:
                   }
                 }
 
-# Extend the zone temperature sensors to add on_value triggers
+# Last synced temperature display sensor
 sensor:
   - platform: template
     name: ${sync_last_synced_temp}
