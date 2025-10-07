@@ -108,13 +108,42 @@ interval:
                   unsigned long now = millis();
                   unsigned long interval_ms = id(sync_interval_setting).state * 1000;
                   return (now - id(last_sync_time) >= interval_ms);
+              - lambda: |-
+                  // Check if temperature is valid before attempting sync
+                  std::string selected_zone = id(sync_zone_selector).state;
+                  if (selected_zone == "Zone 1" && id(z1_room_temp).has_state()) {
+                    return !isnan(id(z1_room_temp).state);
+                  } else if (selected_zone == "Zone 2" && id(z2_room_temp).has_state()) {
+                    return !isnan(id(z2_room_temp).state);
+                  }
+                  return false;
           then:
             - lambda: |-
                 // Update last sync time
                 id(last_sync_time) = millis();
+                
+                // Get temperature and log it
+                std::string selected_zone = id(sync_zone_selector).state;
+                float temp = NAN;
+                
+                if (selected_zone == "Zone 1" && id(z1_room_temp).has_state()) {
+                  temp = id(z1_room_temp).state;
+                } else if (selected_zone == "Zone 2" && id(z2_room_temp).has_state()) {
+                  temp = id(z2_room_temp).state;
+                }
+                
+                if (!isnan(temp)) {
+                  // Update display sensor
+                  id(last_synced_temp).publish_state(temp);
+                  
+                  // Build URL and log it
+                  std::string ip = id(remote_thermostat_ip_setting).state;
+                  std::string room_id = id(remote_room_id_setting).state;
+                  std::string url = "http://" + ip + "/number/room_" + room_id + "/set?value=" + str_sprintf("%.1f", temp);
+                  ESP_LOGI("sync", "Syncing %.1f°C to: %s", temp, url.c_str());
+                }
             - http_request.post:
                 url: !lambda |-
-                  // Determine which zone to sync
                   std::string selected_zone = id(sync_zone_selector).state;
                   float temp = NAN;
                   
@@ -124,18 +153,18 @@ interval:
                     temp = id(z2_room_temp).state;
                   }
                   
-                  if (!isnan(temp)) {
-                    // Update display sensor
-                    id(last_synced_temp).publish_state(temp);
-                    
-                    // Build URL
-                    std::string ip = id(remote_thermostat_ip_setting).state;
-                    std::string room_id = id(remote_room_id_setting).state;
-                    return "http://" + ip + "/number/room_" + room_id + "/set?value=" + str_sprintf("%.1f", temp);
-                  }
-                  
-                  // Return empty string if no valid temperature
-                  return std::string("");
+                  std::string ip = id(remote_thermostat_ip_setting).state;
+                  std::string room_id = id(remote_room_id_setting).state;
+                  return "http://" + ip + "/number/room_" + room_id + "/set?value=" + str_sprintf("%.1f", temp);
+                body: ""
+                on_response:
+                  then:
+                    - lambda: |-
+                        ESP_LOGI("sync", "HTTP POST success! Status: %d", response->status_code);
+                on_error:
+                  then:
+                    - lambda: |-
+                        ESP_LOGE("sync", "HTTP POST failed!");
 
 # Sensors for sync feature
 sensor:
