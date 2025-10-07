@@ -7,6 +7,7 @@ substitutions:
 http_request:
   buffer_size_tx: 20248
   id: http_request_component  # Required for sync feature to work
+  timeout: 5s  # Force connection close after 5 seconds
 
 ota:
   - platform: esphome
