@@ -90,57 +90,43 @@ switch:
     icon: "mdi:thermometer-lines"
     entity_category: config
 
-# Interval to sync temperature periodically (fallback mechanism)
-# This ensures temperature is synced even if on_value doesn't trigger
-# Uses the interval setting from the number component
+# Interval to sync temperature periodically
+# Checks every interval seconds if sync is needed
 interval:
-  - interval: 10s
+  - interval: !lambda "return id(sync_interval_setting).state * 1000;"
     then:
       - if:
           condition:
-            switch.is_on: sync_to_remote_enabled
+            and:
+              - switch.is_on: sync_to_remote_enabled
+              - lambda: 'return !id(remote_thermostat_ip_setting).state.empty();'
           then:
             - lambda: |-
-                // Check if it's time to sync based on the configured interval
-                static uint32_t last_sync = 0;
-                uint32_t now = millis();
-                uint32_t interval_ms = id(sync_interval_setting).state * 1000;
+                // Determine which zone to sync
+                std::string selected_zone = id(sync_zone_selector).state;
+                float temp = NAN;
                 
-                if (now - last_sync >= interval_ms) {
-                  // Check if IP is configured
-                  std::string ip = id(remote_thermostat_ip_setting).state;
-                  if (ip.empty() || ip == "") {
-                    ESP_LOGW("sync_thermostat", "Remote thermostat IP not configured, skipping sync");
-                    last_sync = now;
-                    return;
-                  }
-                  
-                  // Determine which zone to sync
-                  std::string selected_zone = id(sync_zone_selector).state;
-                  float temp = NAN;
-                  
-                  if (selected_zone == "Zone 1" && id(z1_room_temp).has_state()) {
-                    temp = id(z1_room_temp).state;
-                  } else if (selected_zone == "Zone 2" && id(z2_room_temp).has_state()) {
-                    temp = id(z2_room_temp).state;
-                  }
-                  
-                  if (!isnan(temp)) {
-                    std::string room_id = id(remote_room_id_setting).state;
-                    std::string url = "http://" + ip + "/number/room_" + room_id + "/set?value=" + str_sprintf("%.1f", temp);
-                    
-                    ESP_LOGI("sync_thermostat", "Periodic sync: %.1f°C from %s to %s", temp, selected_zone.c_str(), url.c_str());
-                    
-                    // Use the http_request component (must have ID: http_request_component)
-                    id(http_request_component).post(url, "");
-                    id(last_synced_temp).publish_state(temp);
-                    
-                    last_sync = now;
-                  }
+                if (selected_zone == "Zone 1" && id(z1_room_temp).has_state()) {
+                  temp = id(z1_room_temp).state;
+                } else if (selected_zone == "Zone 2" && id(z2_room_temp).has_state()) {
+                  temp = id(z2_room_temp).state;
                 }
+                
+                if (!isnan(temp)) {
+                  id(last_synced_temp).publish_state(temp);
+                  id(sync_temp_value).publish_state(temp);
+                }
+            - http_request.post:
+                url: !lambda |-
+                  std::string ip = id(remote_thermostat_ip_setting).state;
+                  std::string room_id = id(remote_room_id_setting).state;
+                  float temp = id(sync_temp_value).state;
+                  return "http://" + ip + "/number/room_" + room_id + "/set?value=" + str_sprintf("%.1f", temp);
+                verify_ssl: false
 
-# Last synced temperature display sensor
+# Sensors for sync feature
 sensor:
+  # Last synced temperature display sensor
   - platform: template
     name: ${sync_last_synced_temp}
     id: last_synced_temp
@@ -150,3 +136,10 @@ sensor:
     accuracy_decimals: 1
     icon: "mdi:thermometer-check"
     entity_category: diagnostic
+  
+  # Internal helper sensor to pass temperature to http_request action
+  - platform: template
+    id: sync_temp_value
+    internal: true
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
