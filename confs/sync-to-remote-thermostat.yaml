@@ -7,21 +7,17 @@
 # DOCUMENTATION:
 #   See docs/sync-to-remote-thermostat.md for complete setup instructions
 #
-# CRITICAL REQUIREMENT:
-#   You MUST add an ID to the http_request component in ecodan-esphome.yaml:
-#   
-#   http_request:
-#     buffer_size_tx: 20248
-#     id: http_request_component    # ADD THIS LINE
-#
-#   Without this ID, compilation will fail!
+# REQUIREMENTS:
+#   - http_request component must be configured with appropriate timeout
+#   - Recommended: timeout: 5s and verify_ssl: false in http_request
 #
 # FEATURES:
-#   - Real-time temperature sync when sensor value changes
-#   - Periodic fallback sync (configurable interval)
+#   - Periodic sync (configurable interval via Web UI)
+#   - Non-blocking HTTP requests (won't cause ESP reboots)
 #   - Fully configurable via Web UI (no reflash needed)
 #   - Supports both Zone 1 and Zone 2
 #   - Safety: Default OFF, empty IP validation
+#   - Respects user-configured sync interval
 # =============================================================================
 
 # =============================================================================
@@ -90,39 +86,56 @@ switch:
     icon: "mdi:thermometer-lines"
     entity_category: config
 
-# Interval to sync temperature periodically
-# Checks every interval seconds if sync is needed
+# Global variable to track last sync time
+globals:
+  - id: last_sync_time
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+
+# Interval to check if sync is needed
+# Fixed 10-second interval, but respects user's sync_interval_setting
 interval:
-  - interval: !lambda "return id(sync_interval_setting).state * 1000;"
+  - interval: 10s
     then:
       - if:
           condition:
             and:
               - switch.is_on: sync_to_remote_enabled
               - lambda: 'return !id(remote_thermostat_ip_setting).state.empty();'
+              - lambda: |-
+                  // Check if enough time has elapsed based on user setting
+                  unsigned long now = millis();
+                  unsigned long interval_ms = id(sync_interval_setting).state * 1000;
+                  return (now - id(last_sync_time) >= interval_ms);
           then:
             - lambda: |-
-                // Determine which zone to sync
-                std::string selected_zone = id(sync_zone_selector).state;
-                float temp = NAN;
-                
-                if (selected_zone == "Zone 1" && id(z1_room_temp).has_state()) {
-                  temp = id(z1_room_temp).state;
-                } else if (selected_zone == "Zone 2" && id(z2_room_temp).has_state()) {
-                  temp = id(z2_room_temp).state;
-                }
-                
-                if (!isnan(temp)) {
-                  id(last_synced_temp).publish_state(temp);
-                  id(sync_temp_value).publish_state(temp);
-                }
+                // Update last sync time
+                id(last_sync_time) = millis();
             - http_request.post:
                 url: !lambda |-
-                  std::string ip = id(remote_thermostat_ip_setting).state;
-                  std::string room_id = id(remote_room_id_setting).state;
-                  float temp = id(sync_temp_value).state;
-                  return "http://" + ip + "/number/room_" + room_id + "/set?value=" + str_sprintf("%.1f", temp);
-                verify_ssl: false
+                  // Determine which zone to sync
+                  std::string selected_zone = id(sync_zone_selector).state;
+                  float temp = NAN;
+                  
+                  if (selected_zone == "Zone 1" && id(z1_room_temp).has_state()) {
+                    temp = id(z1_room_temp).state;
+                  } else if (selected_zone == "Zone 2" && id(z2_room_temp).has_state()) {
+                    temp = id(z2_room_temp).state;
+                  }
+                  
+                  if (!isnan(temp)) {
+                    // Update display sensor
+                    id(last_synced_temp).publish_state(temp);
+                    
+                    // Build URL
+                    std::string ip = id(remote_thermostat_ip_setting).state;
+                    std::string room_id = id(remote_room_id_setting).state;
+                    return "http://" + ip + "/number/room_" + room_id + "/set?value=" + str_sprintf("%.1f", temp);
+                  }
+                  
+                  // Return empty string if no valid temperature
+                  return std::string("");
 
 # Sensors for sync feature
 sensor:
@@ -136,10 +149,3 @@ sensor:
     accuracy_decimals: 1
     icon: "mdi:thermometer-check"
     entity_category: diagnostic
-  
-  # Internal helper sensor to pass temperature to http_request action
-  - platform: template
-    id: sync_temp_value
-    internal: true
-    unit_of_measurement: "°C"
-    accuracy_decimals: 1

@@ -3,10 +3,10 @@ substitutions:
   friendlyName: Ecodan heatpump
 
 # enable ota update via http request
-# id is required for sync-to-remote-thermostat feature
 http_request:
   buffer_size_tx: 20248
-  id: http_request_component
+  timeout: 5s  # Prevent connection hangs
+  verify_ssl: false  # Required for ESP32 Arduino framework
 
 ota:
   - platform: esphome
