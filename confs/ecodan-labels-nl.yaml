@@ -155,9 +155,9 @@ substitutions:
   total_increasing_dhw_consumed: Totaal Verbruik Tapwater
   total_increasing_dhw_delivered: Totaal Geleverd Tapwater
   # sync naar externe thermostaat vertalingen
-  sync_remote_thermostat_ip: Externe Thermostaat IP
-  sync_remote_room_id: Externe Kamer ID
-  sync_interval_seconds: Sync Interval (seconden)
-  sync_zone_selector: Sync Zone
-  sync_to_remote_enabled: Sync naar Externe Thermostaat
-  sync_last_synced_temp: Laatst Gesynchroniseerde Temperatuur
+  sync_remote_thermostat_ip: "Sync: Externe Thermostaat IP"
+  sync_remote_room_id: "Sync: Externe Kamer ID"
+  sync_interval_seconds: "Sync: Interval (seconden)"
+  sync_zone_selector: "Sync: Zone Selectie"
+  sync_to_remote_enabled: "Sync: Inschakelen"
+  sync_last_synced_temp: "Sync: Laatste Temperatuur"
