@@ -4,10 +4,12 @@ substitutions:
 
 # enable ota update via http request
 # timeout prevents connection hangs when remote device is slow/unresponsive
+# watchdog_timeout prevents ESP reboot during HTTP requests
 http_request:
   buffer_size_tx: 20248
   timeout: 5s  # Prevent connection hangs
   verify_ssl: false  # Required for ESP32 Arduino framework
+  watchdog_timeout: 10s  # Prevent watchdog reboot during HTTP operations
 
 ota:
   - platform: esphome
