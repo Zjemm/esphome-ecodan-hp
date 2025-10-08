@@ -8,16 +8,23 @@
 #   See docs/sync-to-remote-thermostat.md for complete setup instructions
 #
 # REQUIREMENTS:
-#   - http_request component must be configured with appropriate timeout
-#   - Recommended: timeout: 5s and verify_ssl: false in http_request
+#   - http_request component must be configured with watchdog_timeout
+#   - Required: watchdog_timeout: 10s, timeout: 5s, verify_ssl: false
 #
 # FEATURES:
-#   - Periodic sync (configurable interval via Web UI)
+#   - Near-instant sync: Detects changes within 10 seconds
+#   - Change detection: Only syncs when temperature changes by ≥0.1°C
+#   - Rate limiter: User-configurable minimum interval (default 60s)
 #   - Non-blocking HTTP requests (won't cause ESP reboots)
 #   - Fully configurable via Web UI (no reflash needed)
 #   - Supports both Zone 1 and Zone 2
 #   - Safety: Default OFF, empty IP validation
-#   - Respects user-configured sync interval
+#
+# HOW IT WORKS:
+#   - Checks every 10 seconds for temperature changes
+#   - Syncs only if temperature changed by 0.1°C or more
+#   - Respects minimum interval setting (prevents spam)
+#   - Result: Responsive (10s max delay) without being aggressive
 # =============================================================================
 
 # =============================================================================
@@ -86,15 +93,21 @@ switch:
     icon: "mdi:thermometer-lines"
     entity_category: config
 
-# Global variable to track last sync time
+# Global variables to track last sync state
 globals:
   - id: last_sync_time
     type: unsigned long
     restore_value: no
     initial_value: '0'
+  
+  - id: last_synced_value
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
 
 # Interval to check if sync is needed
-# Fixed 10-second interval, but respects user's sync_interval_setting
+# Near-instant: Checks every 10s and syncs if temperature changed
+# Also respects user's minimum interval setting as rate limiter
 interval:
   - interval: 10s
     then:
@@ -104,25 +117,33 @@ interval:
               - switch.is_on: sync_to_remote_enabled
               - lambda: 'return !id(remote_thermostat_ip_setting).state.empty();'
               - lambda: |-
-                  // Check if enough time has elapsed based on user setting
+                  // Check if minimum interval elapsed (rate limiter)
                   unsigned long now = millis();
                   unsigned long interval_ms = id(sync_interval_setting).state * 1000;
                   return (now - id(last_sync_time) >= interval_ms);
               - lambda: |-
-                  // Check if temperature is valid before attempting sync
+                  // Check if temperature is valid AND changed since last sync
                   std::string selected_zone = id(sync_zone_selector).state;
+                  float current_temp = NAN;
+                  
                   if (selected_zone == "Zone 1" && id(z1_room_temp).has_state()) {
-                    return !isnan(id(z1_room_temp).state);
+                    current_temp = id(z1_room_temp).state;
                   } else if (selected_zone == "Zone 2" && id(z2_room_temp).has_state()) {
-                    return !isnan(id(z2_room_temp).state);
+                    current_temp = id(z2_room_temp).state;
+                  }
+                  
+                  // Sync if: temp is valid AND (never synced OR temp changed by 0.1°C)
+                  if (!isnan(current_temp)) {
+                    if (isnan(id(last_synced_value))) {
+                      return true;  // First sync
+                    }
+                    // Check if changed by at least 0.1°C
+                    return (abs(current_temp - id(last_synced_value)) >= 0.1);
                   }
                   return false;
           then:
             - lambda: |-
-                // Update last sync time
-                id(last_sync_time) = millis();
-                
-                // Get temperature and log it
+                // Get temperature
                 std::string selected_zone = id(sync_zone_selector).state;
                 float temp = NAN;
                 
@@ -133,6 +154,10 @@ interval:
                 }
                 
                 if (!isnan(temp)) {
+                  // Update last sync state
+                  id(last_sync_time) = millis();
+                  id(last_synced_value) = temp;
+                  
                   // Update display sensor
                   id(last_synced_temp).publish_state(temp);
                   
@@ -140,7 +165,10 @@ interval:
                   std::string ip = id(remote_thermostat_ip_setting).state;
                   std::string room_id = id(remote_room_id_setting).state;
                   std::string url = "http://" + ip + "/number/room_" + room_id + "/set?value=" + str_sprintf("%.1f", temp);
-                  ESP_LOGI("sync", "Syncing %.1f°C to: %s", temp, url.c_str());
+                  
+                  float last_val = id(last_synced_value);
+                  ESP_LOGI("sync", "Temperature changed (%.1f°C → %.1f°C), syncing to: %s", 
+                           isnan(last_val) ? 0.0 : last_val, temp, url.c_str());
                 }
             - http_request.post:
                 url: !lambda |-
